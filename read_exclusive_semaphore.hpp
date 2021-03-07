@@ -57,7 +57,7 @@ private:
     }
 
     void reader_acquire() noexcept(false) {
-        writer_done_event.try_or_wait([this] {
+        reader_done_event.try_or_wait([this] {
             try {
                 writer_done_event.try_or_wait([this] {
                     auto expected = reading.load();
