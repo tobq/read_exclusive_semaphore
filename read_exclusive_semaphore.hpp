@@ -1,3 +1,6 @@
+//
+// Created by tobia on 21/02/2021.
+//
 #pragma once
 
 #include <atomic>
@@ -17,6 +20,7 @@ struct read_write_semaphore {
 
 private:
     event writer_done_event;
+    event reader_done_event;
     event readers_done_event;
     atomic_count_t reading = std::numeric_limits<atomic_count_value_t>::min();
     /**
@@ -39,6 +43,7 @@ private:
     bool reader_try_release() {
         auto expected = reading.load();
         bool freed = reading.compare_exchange_weak(expected, expected - 1);
+        reader_done_event.notify();
         if (freed and expected == 1) readers_done_event.notify();
         return freed;
     }
@@ -122,4 +127,4 @@ private:
             sem.exclusive_release();
         }
     };
-}
+};
