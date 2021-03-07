@@ -45,8 +45,7 @@ private:
     }
 
     /**
-     * CAN STARVE WRITER - USE WITH CAUTION
-     * @deprecated not really deprecated - just use with caution
+     * Could lead to exclusive accessor being starved
      */
     void exclusive_acquire() noexcept(false) {
         all_readers_done_event.try_or_wait([this] { return writer_try_acquire(); });
