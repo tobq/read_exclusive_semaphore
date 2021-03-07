@@ -1,12 +1,3 @@
-//
-// Created by tobia on 21/02/2021.
-//
-#pragma once
-
-#include <atomic>
-#include "utils.h"
-#include "event.h"
-
 struct read_write_semaphore {
     using atomic_count_t = std::atomic_unsigned_lock_free;
     static_assert(atomic_count_t::is_always_lock_free);
@@ -21,7 +12,7 @@ struct read_write_semaphore {
 private:
     event writer_done_event;
     event reader_done_event;
-    event readers_done_event;
+    event all_readers_done_event;
     atomic_count_t reading = std::numeric_limits<atomic_count_value_t>::min();
     /**
      * set by exclusive accessor
@@ -44,7 +35,7 @@ private:
         auto expected = reading.load();
         bool freed = reading.compare_exchange_weak(expected, expected - 1);
         reader_done_event.notify();
-        if (freed and expected == 1) readers_done_event.notify();
+        if (freed and expected == 1) all_readers_done_event.notify();
         return freed;
     }
 
@@ -58,7 +49,7 @@ private:
      * @deprecated not really deprecated - just use with caution
      */
     void exclusive_acquire() noexcept(false) {
-        readers_done_event.try_or_wait([this] { return writer_try_acquire(); });
+        all_readers_done_event.try_or_wait([this] { return writer_try_acquire(); });
     }
 
     void reader_acquire() noexcept(false) {
@@ -80,7 +71,7 @@ private:
     }
 
     void reader_release() noexcept(false) {
-        if (--reading == 0) readers_done_event.notify();
+        if (--reading == 0) all_readers_done_event.notify();
     }
 
     void exclusive_release() {
@@ -127,4 +118,4 @@ private:
             sem.exclusive_release();
         }
     };
-};
+}
