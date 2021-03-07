@@ -5,9 +5,9 @@ struct read_write_semaphore {
 
     inline auto exclusive_lock_free() noexcept(false) { return lock_free_exclusive_token(*this); }
 
-    inline auto write() { return exclusive_token(*this); }
+    inline auto exclusive_locking() { return locking_exclusive_token(*this); }
 
-    inline auto read() { return read_token(*this); }
+    inline auto read_locking() { return read_token(*this); }
 
 private:
     event writer_done_event;
@@ -93,10 +93,9 @@ private:
 
     class exclusive_token {
         read_write_semaphore &sem;
+    protected:
 
-    public:
         explicit exclusive_token(read_write_semaphore &sem) : sem(sem) {
-            sem.exclusive_acquire();
         }
 
         ~exclusive_token() {
@@ -104,17 +103,23 @@ private:
         }
     };
 
-    class lock_free_exclusive_token {
-        read_write_semaphore &sem;
-
-    public:
-        explicit lock_free_exclusive_token(read_write_semaphore &sem) noexcept(false): sem(sem) {
-            if (!sem.writer_try_acquire())
-                throw acquisition_error("failed to obtain write access to semaphore");
+    /**
+     * locks on acquire
+     */
+    struct locking_exclusive_token : public exclusive_token {
+        explicit locking_exclusive_token(read_write_semaphore &sem) : exclusive_token(sem) {
+            sem.exclusive_acquire();
         }
+    };
 
-        ~lock_free_exclusive_token() {
-            sem.exclusive_release();
+    /**
+     * throws if fails to lock-free acquire
+     */
+    class lock_free_exclusive_token : public exclusive_token {
+    public:
+        explicit lock_free_exclusive_token(read_write_semaphore &sem) : exclusive_token(sem) {
+            if (!sem.writer_try_acquire())
+                throw acquisition_error("failed to obtain exclusive_locking access to semaphore");
         }
     };
 }
