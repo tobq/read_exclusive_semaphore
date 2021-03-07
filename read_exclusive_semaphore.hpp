@@ -73,10 +73,10 @@ class read_exclusive_semaphore {
     }
 
     struct read_token {
-        read_write_semaphore &sem;
+        read_exclusive_semaphore &sem;
 
     public:
-        explicit read_token(read_write_semaphore &sem) : sem(sem) {
+        explicit read_token(read_exclusive_semaphore &sem) : sem(sem) {
             sem.reader_acquire();
         }
 
@@ -86,10 +86,10 @@ class read_exclusive_semaphore {
     };
 
     class exclusive_token {
-        read_write_semaphore &sem;
+        read_exclusive_semaphore &sem;
     protected:
 
-        explicit exclusive_token(read_write_semaphore &sem) : sem(sem) {
+        explicit exclusive_token(read_exclusive_semaphore &sem) : sem(sem) {
         }
 
         ~exclusive_token() {
@@ -101,7 +101,7 @@ class read_exclusive_semaphore {
      * locks on acquire
      */
     struct locking_exclusive_token : public exclusive_token {
-        explicit locking_exclusive_token(read_write_semaphore &sem) : exclusive_token(sem) {
+        explicit locking_exclusive_token(read_exclusive_semaphore &sem) : exclusive_token(sem) {
             sem.exclusive_acquire();
         }
     };
@@ -111,7 +111,7 @@ class read_exclusive_semaphore {
      */
     class lock_free_exclusive_token : public exclusive_token {
     public:
-        explicit lock_free_exclusive_token(read_write_semaphore &sem) : exclusive_token(sem) {
+        explicit lock_free_exclusive_token(read_exclusive_semaphore &sem) : exclusive_token(sem) {
             if (!sem.try_exclusive_acquire())
                 throw acquisition_error("failed to obtain exclusive_locking access to semaphore");
         }
