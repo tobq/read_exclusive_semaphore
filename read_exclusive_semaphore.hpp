@@ -7,6 +7,8 @@
 #include "utils.h"
 #include "event.h"
 
+static_assert(std::atomic_bool::is_always_lock_free);
+
 class read_exclusive_semaphore {
     using read_count_t = std::atomic_unsigned_lock_free;
     static_assert(read_count_t::is_always_lock_free);
@@ -14,41 +16,38 @@ class read_exclusive_semaphore {
 
     event writer_done_event;
     event reader_done_event;
-    event all_readers_done_event;
 
-    // todo: find a way to not use atomic, but share the writer mutex/cv somehow
-    std::atomic_bool writer_waiting = false;
+    /**
+     * should only be used within writer_done_event::wait
+     */
+    bool writer_using = false;
     read_count_t read_count = 0;
-    /**
-     * set by exclusive accessor
-     */
-    static const read_count_value_t max_value = std::numeric_limits<read_count_value_t>::max();
-    /**
-     * Limit for number of concurrent readers
-     */
-    static const read_count_value_t max_count = max_value - 1;
+    static const read_count_value_t max_readers = std::numeric_limits<read_count_value_t>::max();
 
     class max_readers_exception : public std::exception {
     };
 
     bool try_read_acquire() {
+        if (writer_using) return false;
         auto expected = read_count.load();
-        return expected != max_count && read_count.compare_exchange_weak(expected, expected + 1);
+        return read_count.compare_exchange_weak(expected, expected + 1);
     }
 
-    inline bool try_exclusive_acquire() {
-        read_count_value_t expected = 0;
-        return read_count.compare_exchange_weak(expected, max_count);
-    }
+//    inline bool try_exclusive_acquire() {
+//      TODO: figure out how to make this next line atomic
+//        if (read_count == 0 && !writer_using) writer_using = true;
+//        return writer_using;
+//    }
 
     /**
      * Could lead to exclusive accessor being starved
      */
     void exclusive_acquire() noexcept(false) {
-        all_readers_done_event.try_or_wait([this] {
-            bool acquired = try_exclusive_acquire();
-            writer_waiting = !acquired;
-            return acquired;
+        writer_done_event.try_or_wait([&] {
+            if (writer_using) return false;
+            writer_using = true;
+            read_count.wait(0);
+            return true;
         });
     }
 
@@ -58,8 +57,8 @@ class read_exclusive_semaphore {
                 writer_done_event.try_or_wait([this] {
                     auto expected = read_count.load();
                     do {
-                        if (writer_waiting || expected == max_value) return false;
-                        if (expected == max_count) throw max_readers_exception();
+                        if (writer_using) return false;
+                        if (expected == max_readers) throw max_readers_exception();
                     } while (!read_count.compare_exchange_weak(expected, expected + 1));
                     return true;
                 });
@@ -71,12 +70,12 @@ class read_exclusive_semaphore {
     }
 
     void reader_release() noexcept(false) {
-        if (--read_count == 0) all_readers_done_event.notify();
+        --read_count;
         reader_done_event.notify();
     }
 
     void exclusive_release() {
-        read_count = 0;
+        writer_using = false;
         writer_done_event.notify();
     }
 
@@ -114,19 +113,19 @@ class read_exclusive_semaphore {
         }
     };
 
-    /**
-     * throws if fails to lock-free acquire
-     */
-    class lock_free_exclusive_token : public exclusive_token {
-    public:
-        explicit lock_free_exclusive_token(read_exclusive_semaphore &sem) : exclusive_token(sem) {
-            if (!sem.try_exclusive_acquire())
-                throw acquisition_error("failed to obtain exclusive_locking access to semaphore");
-        }
-    };
+//    /**
+//     * throws if fails to lock-free acquire
+//     */
+//    class lock_free_exclusive_token : public exclusive_token {
+//    public:
+//        explicit lock_free_exclusive_token(read_exclusive_semaphore &sem) : exclusive_token(sem) {
+//            if (!sem.try_exclusive_acquire())
+//                throw acquisition_error("failed to obtain exclusive_locking access to semaphore");
+//        }
+//    };
 
 public:
-    inline auto exclusive_lock_free() noexcept(false) { return lock_free_exclusive_token(*this); }
+//    inline auto exclusive_lock_free() noexcept(false) { return lock_free_exclusive_token(*this); }
 
     inline auto exclusive_locking() { return locking_exclusive_token(*this); }
 
