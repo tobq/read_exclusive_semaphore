@@ -11,10 +11,14 @@ class read_exclusive_semaphore {
     using read_count_t = std::atomic_unsigned_lock_free;
     static_assert(read_count_t::is_always_lock_free);
     using read_count_value_t = typename read_count_t::value_type;
+
     event writer_done_event;
     event reader_done_event;
     event all_readers_done_event;
-    read_count_t read_count = std::numeric_limits<read_count_value_t>::min();
+
+    // todo: find a way to not use atomic, but share the writer mutex/cv somehow
+    std::atomic_bool writer_waiting = false;
+    read_count_t read_count = 0;
     /**
      * set by exclusive accessor
      */
@@ -41,7 +45,11 @@ class read_exclusive_semaphore {
      * Could lead to exclusive accessor being starved
      */
     void exclusive_acquire() noexcept(false) {
-        all_readers_done_event.try_or_wait([this] { return try_exclusive_acquire(); });
+        all_readers_done_event.try_or_wait([this] {
+            bool acquired = try_exclusive_acquire();
+            writer_waiting = !acquired;
+            return acquired;
+        });
     }
 
     void reader_acquire() noexcept(false) {
@@ -50,7 +58,7 @@ class read_exclusive_semaphore {
                 writer_done_event.try_or_wait([this] {
                     auto expected = read_count.load();
                     do {
-                        if (expected == max_value) return false;
+                        if (writer_waiting || expected == max_value) return false;
                         if (expected == max_count) throw max_readers_exception();
                     } while (!read_count.compare_exchange_weak(expected, expected + 1));
                     return true;
@@ -98,7 +106,7 @@ class read_exclusive_semaphore {
     };
 
     /**
-     * locks on acquire
+     * locks only on acquire
      */
     struct locking_exclusive_token : public exclusive_token {
         explicit locking_exclusive_token(read_exclusive_semaphore &sem) : exclusive_token(sem) {
