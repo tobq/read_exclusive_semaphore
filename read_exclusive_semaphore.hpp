@@ -1,7 +1,7 @@
 struct read_write_semaphore {
-    using atomic_count_t = std::atomic_unsigned_lock_free;
-    static_assert(atomic_count_t::is_always_lock_free);
-    using atomic_count_value_t = typename atomic_count_t::value_type;
+    using read_count_t = std::atomic_unsigned_lock_free;
+    static_assert(read_count_t::is_always_lock_free);
+    using read_count_value_t = typename read_count_t::value_type;
 
     inline auto exclusive_lock_free() noexcept(false) { return lock_free_exclusive_token(*this); }
 
@@ -13,35 +13,27 @@ private:
     event writer_done_event;
     event reader_done_event;
     event all_readers_done_event;
-    atomic_count_t reading = std::numeric_limits<atomic_count_value_t>::min();
+    read_count_t read_count = std::numeric_limits<read_count_value_t>::min();
     /**
      * set by exclusive accessor
      */
-    static const atomic_count_value_t max_value = std::numeric_limits<atomic_count_value_t>::max();
+    static const read_count_value_t max_value = std::numeric_limits<read_count_value_t>::max();
     /**
      * Limit for number of concurrent readers
      */
-    static const atomic_count_value_t max_count = max_value - 1;
+    static const read_count_value_t max_count = max_value - 1;
 
     class max_readers_exception : public std::exception {
     };
 
     bool reader_try_acquire() {
-        auto expected = reading.load();
-        return expected != max_count && reading.compare_exchange_weak(expected, expected + 1);
-    }
-
-    bool reader_try_release() {
-        auto expected = reading.load();
-        bool freed = reading.compare_exchange_weak(expected, expected - 1);
-        reader_done_event.notify();
-        if (freed and expected == 1) all_readers_done_event.notify();
-        return freed;
+        auto expected = read_count.load();
+        return expected != max_count && read_count.compare_exchange_weak(expected, expected + 1);
     }
 
     inline bool writer_try_acquire() {
-        atomic_count_value_t expected = 0;
-        return reading.compare_exchange_weak(expected, max_count);
+        read_count_value_t expected = 0;
+        return read_count.compare_exchange_weak(expected, max_count);
     }
 
     /**
@@ -55,11 +47,11 @@ private:
         reader_done_event.try_or_wait([this] {
             try {
                 writer_done_event.try_or_wait([this] {
-                    auto expected = reading.load();
+                    auto expected = read_count.load();
                     do {
                         if (expected == max_value) return false;
                         if (expected == max_count) throw max_readers_exception();
-                    } while (!reading.compare_exchange_weak(expected, expected + 1));
+                    } while (!read_count.compare_exchange_weak(expected, expected + 1));
                     return true;
                 });
             } catch (const max_readers_exception &) {
@@ -70,11 +62,12 @@ private:
     }
 
     void reader_release() noexcept(false) {
-        if (--reading == 0) all_readers_done_event.notify();
+        if (--read_count == 0) all_readers_done_event.notify();
+        reader_done_event.notify();
     }
 
     void exclusive_release() {
-        reading = 0;
+        read_count = 0;
         writer_done_event.notify();
     }
 
